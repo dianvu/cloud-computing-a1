@@ -7,6 +7,11 @@
 <body>
     <div>
         <h1>Register</h1>
+        {% if error %}
+        <div style="color: red; margin-bottom: 10px;">
+            {{ error }}
+        </div>
+        {% endif %}
         <form method="POST" action="/register">
             <div>
                 <label>ID</label>
