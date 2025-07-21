@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Register</title>
+    <link rel="stylesheet" href="../static/style.css">
+</head>
+<body>
+    <div>
+        <h1>Register</h1>
+        <form method="POST" action="/register">
+            <div>
+                <label>ID</label>
+                <input type="text" name="id" id="id" required>
+            </div>
+            
+            <div>
+                <label>Username</label>
+                <input type="text" name="user_name" id="user_name" required>
+            </div>
+
+            <div>
+                <label>Password</label>
+                <input type="password" name="password" id="password" required>
+            </div>
+            
+            <div>
+                <label>User Image</label>
+                <input type="file" id="user_image" name="user_image" id="user_image" accept="image/*">
+            </div>
+
+            <button type="submit">Register</button>
+    </form>
+
+    </div>
+</body>
+</html>
