@@ -1,10 +1,14 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, session
 from google.cloud import firestore, storage
 from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud.storage import bucket
+from datetime import datetime
 # from builtins import print
 
 app = Flask(__name__)
+app.secret_key = '9eNHcZ(D4c0/'  # Required for session management
 db = firestore.Client(project="s3979839-a1")
+storage_client = storage.Client()
 
 @app.route('/')
 def index():
@@ -32,7 +36,10 @@ def login():
         if id not in login_info or login_info[id] != password:
             error = 'ID or password is invalid'
             return render_template('login.html', error=error)
-        # Valid credentials, redirect to forum
+        
+        # Valid credentials, save to session then redirect to forum
+        session['id'] = id # Setting session variables
+        session['login'] = True
         return redirect(url_for('forum', id=id))
     return render_template('login.html', error=error)
 
@@ -40,25 +47,21 @@ def login():
 def register():
     error = None
     if request.method == 'POST':
-        id = request.form.get('id')
+        user_id = request.form.get('id')
         user_name = request.form.get('user_name')
         password = request.form.get('password')
-
-        # Create FieldFilter
-        field_filter_id = FieldFilter('id', '==', id)
-        field_filter_user_name = FieldFilter('user_name', '==', user_name)
 
         # Query Firestore for a user with matching id or username
         users_ref = db.collection('user')
         
         # Check if ID exists
-        id_exists = any(users_ref.where(filter=field_filter_id).stream())
+        id_exists = any(users_ref.where(filter=FieldFilter('id', '==', user_id).stream()))
         if id_exists:
             error = 'The ID already exists'
             return render_template('register.html', error=error)
 
         # Check if username exists
-        username_exists = any(users_ref.where(filter=field_filter_user_name).stream())
+        username_exists = any(users_ref.where(filter=FieldFilter('user_name', '==', user_name)).stream())
         if username_exists:
             error = 'The username already exists'
             return render_template('register.html', error=error)
@@ -66,24 +69,168 @@ def register():
         # If no error, create the user
         # 1. Store user info in Firestore
         user_data = {
-            'id': id,
+            'id': user_id,
             'user_name': user_name,
             'password': password
         }
         db.collection('user').add(user_data)
 
         # 2. Upload image to Google Cloud Storage
-        image = request.files.get('image')
-        if image:
-            filename = filename.image
-            storage_client = storage.Client()
+        user_image = request.files.get('user_image')
+        if user_image:
+            filename = f"{user_id}.png"
             bucket = storage_client.bucket('user_avatar-a1')
-            blob = bucket.blob('')
-            blob.upload_from_file(image)
+            blob = bucket.blob(filename)
+            blob.upload_from_file(user_image)
+            blob.make_public()
         
         # 3. Redirect to login
         return redirect(url_for('login'))
     return render_template('register.html', error=error)
+
+@app.route('/forum', methods=['GET', 'POST'])
+def forum():
+    # Allow log in forum if
+    # 1. checking login session, allow to /forum if user already login
+    if 'login' not in session or not session['login']:
+        return redirect(url_for('login'))
+    
+    # 2. also check user 'id', maintain identification
+    user_id = session.get('id')
+    if not user_id: return redirect(url_for('login'))
+
+    # Get user information from Firestore, monitoring session
+    users_ref = db.collection('user')
+    user_docs = users_ref.where(filter=FieldFilter('id', '==', user_id)).stream()
+
+    user_info = None
+    for doc in user_docs:
+        user_info = doc.to_dict()
+        break
+
+    if not user_info:
+        # If user is not exist in db, clear session and redirect to login
+        session.clear()
+        return redirect(url_for('login'))
+    
+
+        # Checking if an user avatar filename exists on GCS
+    user_avatar_filename = f"{user_id}.png"
+    user_avatar_bucket = storage_client.bucket('user_avatar-a1')
+    user_avatar_blob = user_avatar_bucket.blob(user_avatar_filename)
+    default_avatar_blob = user_avatar_bucket.blob("default.png")
+    
+    # If exist then get URL for current login user avatar
+    if user_avatar_blob.exists():
+        avatar_url = user_avatar_blob.public_url
+    else:
+        avatar_url = default_avatar_blob.public_url
+
+    if request.method == 'POST':
+        subject = request.form.get('subject')
+        message_text = request.form.get('message_text')
+        message_image = request.files.get('message_image')
+
+        if not subject: # If subject is empty, display list of 10 latest messages 
+            messages = get_latest_messages(db, storage_client)
+            # Rendering forum page with error for user
+            return render_template('forum.html',
+                                   user_name=user_info['user_name'],
+                                   user_id=user_id,
+                                   avatar_url=avatar_url,
+                                   messages=messages,
+                                   post_error="Subject cannot be empty.")
+        
+        # Store message metadata in dictionary 
+        message_data = {
+            'user_id': user_id,
+            'user_name': user_info['user_name'],
+            'subject': subject,
+            'message_text': message_text,
+            'timestamp': firestore.SERVER_TIMESTAMP # Update Firestore document Timestamp
+        }
+        
+        # Store message post image in Google Cloud Storage
+        image_url_for_post = None
+        if message_image and message_image.filename != '':
+            message_img = f"{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            posting_img_bucket = storage_client.bucket('posting_img-a1') 
+            message_blob = posting_img_bucket.blob(message_img)
+            message_blob.upload_from_file(message_image)
+            message_blob.make_public()
+            image_url_for_post = message_blob.public_url
+
+        if image_url_for_post:
+            message_data['image_url'] = image_url_for_post
+
+        db.collection('messages').add(message_data) # Store into messages collection
+
+        return redirect(url_for('forum'))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
+    
+    # Message display area
+    messages = get_latest_messages(db, storage_client)
+
+    return render_template('forum.html',
+                           user_name=user_info['user_name'],
+                           user_id=user_id,
+                           avatar_url=avatar_url,
+                           messages=messages,
+                           post_error=None)
+
+# Helper function to get latest messages from the top-level 'messages' collection
+def get_latest_messages(db_client, storage_client_instance):
+    messages_ref = db_client.collection('messages')
+    query = messages_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10)
+    docs = query.stream()
+
+    latest_messages = []
+    user_avatar_bucket = storage_client_instance.bucket('user_avatar-a1') # Reference the user avatar bucket once
+    
+    # Extract all the info to display on message display area
+    for doc in docs:
+        message_data = doc.to_dict()
+        message_data['display_time'] = message_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+
+        # Checking if an poster avatar exists in GCS 
+        poster_id = message_data.get('user_id')
+        poster_avatar_filename = f"{poster_id}.png"
+        poster_avatar_blob = user_avatar_bucket.blob(poster_avatar_filename)
+        default_avatar_blob = user_avatar_bucket.blob("default.png")
+        if poster_avatar_blob.exists():
+            message_data['poster_avatar_url'] = poster_avatar_blob.public_url
+        else:
+            message_data['poster_avatar_url'] = default_avatar_blob.public_url
+
+        latest_messages.append(message_data)
+    return latest_messages
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+@app.route('/user_profile/<user_id>')
+def user_profile(user_id):
+    user_data = None
+    users_ref = db.collection('user')
+    user_docs = users_ref.where(filter=FieldFilter('id', '==', user_id)).limit(1).get()
+    for doc in user_docs:
+        user_data = doc.to_dict()
+        break
+    
+    if not user_data:
+        return "User not found", 404
+    
+    img_filename = f"{user_id}.png"
+    bucket = storage_client.bucket('user_avatar-a1')
+    blob = bucket.blob(img_filename)
+    default_blob = bucket.blob("default.png")
+    if blob.exists():
+        profile_avatar_url = blob.public_url
+    else:
+        profile_avatar_url = default_blob.public_url
+
+    return render_template('user_profile.html', user_data=user_data, profile_avatar_url=profile_avatar_url)
 
 if __name__ == '__main__':
     app.run(debug=True)

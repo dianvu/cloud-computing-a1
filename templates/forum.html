@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Forum</title>
+</head>
+<body>
+    <div class="container">
+        <div class="left-panel">
+            <div class="user-area">
+                <h2>User</h2>
+                {% if avatar_url %}
+                    <img src="{{ avatar_url }}" width="120" height="120">
+                {% else %}
+                    <img src="{{ default_avatar }}" width="120" height="120">
+                {% endif %}
+                <br><a href="{{ url_for('user_profile', user_id=user_id) }}">{{ user_name }}</a></br>
+                <a href="{{ url_for('logout') }}" class="logout-link">Logout</a>
+            </div>
+
+            <div class="message-post-area">
+                <h2>New Post</h2>
+                {% if post_error %}
+                    <p class="post-error">{{ post_error }}</p>
+                {% endif %}
+                <form method="POST" enctype="multipart/form-data">
+                    <label for="subject">Subject (required):</label>
+                    <input type="text" id="subject" name="subject" placeholder="Enter subject" required><br>
+
+                    <label for="message_text">Message Text:</label>
+                    <textarea id="message_text" name="message_text" placeholder="What's on your mind?"></textarea><br>
+
+                    <label for="message_image">Upload Image:</label>
+                    <input type="file" id="message_image" name="message_image" accept="image/*"><br>
+
+                    <button type="submit">Submit Post</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="message-display-area">
+                <h2>Latest Messages</h2>
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="message-card">
+                            <div class="message-header">
+                                <img src="{{ message.poster_avatar_url }}" width="120" height="120">
+                                <strong>{{ message.user_name }}</strong>
+                                <span>{{ message.display_time }}</span>
+                            </div>
+                            <div class="message-subject">
+                                <span style="font-weight: bold;">Subject:</span>
+                                <span>{{ message.subject }}</span>
+                            </div>
+                            <div class="message-text">{{ message.message_text }}</div>
+                            {% if message.image_url %}
+                                <img src="{{ message.image_url }}" class="message-image">
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <p>No messages posted yet!</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</body>
+</html>
