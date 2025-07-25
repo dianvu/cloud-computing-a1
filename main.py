@@ -55,7 +55,7 @@ def register():
         users_ref = db.collection('user')
         
         # Check if ID exists
-        id_exists = any(users_ref.where(filter=FieldFilter('id', '==', user_id).stream()))
+        id_exists = any(users_ref.where(filter=FieldFilter('id', '==', user_id)).stream())
         if id_exists:
             error = 'The ID already exists'
             return render_template('register.html', error=error)
@@ -114,7 +114,7 @@ def forum():
         return redirect(url_for('login'))
     
 
-        # Checking if an user avatar filename exists on GCS
+    # Checking if an user avatar filename exists on GCS
     user_avatar_filename = f"{user_id}.png"
     user_avatar_bucket = storage_client.bucket('user_avatar-a1')
     user_avatar_blob = user_avatar_bucket.blob(user_avatar_filename)
@@ -164,12 +164,10 @@ def forum():
             message_data['image_url'] = image_url_for_post
 
         db.collection('messages').add(message_data) # Store into messages collection
-
         return redirect(url_for('forum'))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
     
     # Message display area
     messages = get_latest_messages(db, storage_client)
-
     return render_template('forum.html',
                            user_name=user_info['user_name'],
                            user_id=user_id,
@@ -209,18 +207,26 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-@app.route('/user_profile/<user_id>')
+@app.route('/user_profile/<user_id>', methods=['GET', 'POST'])
 def user_profile(user_id):
+    if 'login' not in session or not session['login'] or session.get('id') != user_id:
+        return redirect(url_for('login'))
+
+    # Fetch user data from Firestore on user_id, check if the user data exists. If not, clear session
     user_data = None
     users_ref = db.collection('user')
     user_docs = users_ref.where(filter=FieldFilter('id', '==', user_id)).limit(1).get()
+    user_doc_ref = None
     for doc in user_docs:
         user_data = doc.to_dict()
+        user_doc_ref = doc.reference
         break
     
     if not user_data:
+        session.clear()
         return "User not found", 404
     
+    # Fetch user avatar from GCS on img_filename then create url for user avatar display
     img_filename = f"{user_id}.png"
     bucket = storage_client.bucket('user_avatar-a1')
     blob = bucket.blob(img_filename)
@@ -229,8 +235,109 @@ def user_profile(user_id):
         profile_avatar_url = blob.public_url
     else:
         profile_avatar_url = default_blob.public_url
+    
+    # Changing password session
+    password_error = None
+    if request.method == 'POST':
+        form_type = request.form.get('form_type')
+        if form_type == 'change_password':
+            old_password = request.form.get('old_password')
+            new_password = request.form.get('new_password')
+            # Check if the user inputs correct old password, update if correct 
+            if user_data['password'] == old_password:
+                user_doc_ref.update({'password': new_password})
+                session.clear()
+                return redirect(url_for('login'))
+            else:
+                password_error = 'The old password is incorrect'
+    
+    # Get user's posts
+    user_posts = []
+    messages_ref = db.collection('messages')
+    query = messages_ref.where(filter=FieldFilter('user_id', '==', user_id)).order_by('timestamp', direction=firestore.Query.DESCENDING).stream()
+    for doc in query:
+        post_data = doc.to_dict()
+        post_data['id'] = doc.id
+        post_data['display_time'] = post_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+        user_posts.append(post_data)
 
-    return render_template('user_profile.html', user_data=user_data, profile_avatar_url=profile_avatar_url)
+    return render_template('user_profile.html', 
+                            user_data=user_data, 
+                            profile_avatar_url=profile_avatar_url,
+                            password_error=password_error,
+                            user_posts=user_posts)
+
+@app.route('/edit_post/<post_id>', methods=['GET', 'POST'])
+def edit_post(post_id):
+    if 'login' not in session or not session['login']:
+        return redirect(url_for('login'))
+
+    message_ref = db.collection('messages').document(post_id)
+    message_doc = message_ref.get()
+
+    if not message_doc.exists:
+        return "Post not found", 404
+
+    post_data = message_doc.to_dict()
+
+    if session.get('id') != post_data['user_id']:
+        return "Unauthorized", 403
+
+    if request.method == 'POST':
+        new_subject = request.form.get('subject')
+        new_message_text = request.form.get('message_text')
+        new_message_image = request.files.get('message_image')
+
+        update_data = {
+            'subject': new_subject,
+            'message_text': new_message_text,
+            'timestamp': firestore.SERVER_TIMESTAMP
+        }
+
+        # Handle image update
+        if new_message_image and new_message_image.filename != '':
+            # Delete old image if it exists
+            if 'image_url' in post_data:
+                old_image_url = post_data['image_url']
+                # Extract blob name from URL
+                old_blob_name = old_image_url.split('/')[-1].split('?')[0] # Remove URL parameters
+                
+                # Check if old_blob_name is a valid blob in the bucket before attempting to delete
+                posting_img_bucket = storage_client.bucket('posting_img-a1')
+                old_blob = posting_img_bucket.blob(old_blob_name)
+                if old_blob.exists():
+                    old_blob.delete()
+
+            # Upload new image
+            message_img = f"{post_data['user_id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            posting_img_bucket = storage_client.bucket('posting_img-a1')
+            message_blob = posting_img_bucket.blob(message_img)
+            message_blob.upload_from_file(new_message_image)
+            message_blob.make_public()
+            update_data['image_url'] = message_blob.public_url
+        elif 'image_url' in post_data and not new_message_image: # If no new image uploaded and there was an old one
+             # Keep the existing image_url if no new image is provided
+            pass
+        elif 'image_url' in post_data and new_message_image and new_message_image.filename == '':
+            # If the user explicitly clears the image by submitting an empty file input, remove the image
+            if 'image_url' in post_data:
+                old_image_url = post_data['image_url']
+                old_blob_name = old_image_url.split('/')[-1].split('?')[0]
+                posting_img_bucket = storage_client.bucket('posting_img-a1')
+                old_blob = posting_img_bucket.blob(old_blob_name)
+                if old_blob.exists():
+                    old_blob.delete()
+            if 'image_url' in update_data: # Ensure it's not set if user chose to remove
+                del update_data['image_url']
+            
+            # Use .update() instead of .set() to merge the changes.
+            message_ref.update({'image_url': firestore.DELETE_FIELD})
+
+
+        message_ref.update(update_data)
+        return redirect(url_for('forum'))
+
+    return render_template('edit_post.html', post=post_data)
 
 if __name__ == '__main__':
     app.run(debug=True)
