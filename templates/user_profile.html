@@ -6,12 +6,12 @@
 </head>
 <body>
     <div class="container">
-        <h1>User Profile: {{ user_data.user_name }}</h1>
+        <h2>User Profile</h2>
 
         <div class="user-info-area">
             <img src="{{ profile_avatar_url }}" width="120" height="120">
-            <p><strong>ID:</strong> {{ user_data.id }}</p>
-            <p><strong>Username:</strong> {{ user_data.user_name }}</p>
+            <br><strong>ID:</strong> {{ user_data.id }}</br>
+            <strong>Username:</strong> {{ user_data.user_name }}
         </div>
 
         <div class="password-edit-area">
