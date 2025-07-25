@@ -316,7 +316,7 @@ def edit_post(post_id):
             message_blob.make_public()
             update_data['image_url'] = message_blob.public_url
         elif 'image_url' in post_data and not new_message_image: # If no new image uploaded and there was an old one
-             # Keep the existing image_url if no new image is provided
+             # Keep the existing image_url
             pass
         elif 'image_url' in post_data and new_message_image and new_message_image.filename == '':
             # If the user explicitly clears the image by submitting an empty file input, remove the image
