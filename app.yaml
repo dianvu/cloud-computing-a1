@@ -1,0 +1,10 @@
+runtime: python312
+entrypoint: gunicorn -b :$PORT main:app # Implement Flask application instance in main.py
+
+handlers:
+- url: /static
+  static_dir: static
+
+- url: /.*
+  script: auto
+
