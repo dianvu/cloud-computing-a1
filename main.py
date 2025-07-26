@@ -3,6 +3,7 @@ from google.cloud import firestore, storage
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.storage import bucket
 from datetime import datetime
+import pytz
 # from builtins import print
 
 app = Flask(__name__)
@@ -140,6 +141,11 @@ def forum():
                                    avatar_url=avatar_url,
                                    messages=messages,
                                    post_error="Subject cannot be empty.")
+
+        # Get current time (move inside POST)
+        hcm_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+        hcm_time = datetime.now(hcm_tz)
+        utc_time = hcm_time.astimezone(pytz.UTC)
         
         # Store message metadata in dictionary 
         message_data = {
@@ -153,7 +159,7 @@ def forum():
         # Store message post image in Google Cloud Storage
         image_url_for_post = None
         if message_image and message_image.filename != '':
-            message_img = f"{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            message_img = f"{user_id}_{utc_time.strftime('%Y%m%d_%H%M%S')}"
             posting_img_bucket = storage_client.bucket('posting_img-a1') 
             message_blob = posting_img_bucket.blob(message_img)
             message_blob.upload_from_file(message_image)
@@ -183,11 +189,18 @@ def get_latest_messages(db_client, storage_client_instance):
 
     latest_messages = []
     user_avatar_bucket = storage_client_instance.bucket('user_avatar-a1') # Reference the user avatar bucket once
+
+    # Setup timezone
+    hcm_tz = pytz.timezone('Asia/Ho_Chi_Minh')
     
     # Extract all the info to display on message display area
     for doc in docs:
         message_data = doc.to_dict()
-        message_data['display_time'] = message_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+
+        # Convert UTC timestamp from Firestore to HCM time for display
+        utc_timestamp = message_data['timestamp']
+        hcm_timestamp = utc_timestamp.replace(tzinfo=pytz.UTC).astimezone(hcm_tz)
+        message_data['display_time'] = hcm_timestamp.strftime('%Y-%m-%d %H:%M:%S')
 
         # Checking if an poster avatar exists in GCS 
         poster_id = message_data.get('user_id')
